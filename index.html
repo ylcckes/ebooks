@@ -1,1 +1,1063 @@
-PDF課本
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>雲端 PDF 電子書櫃 (Drive版)</title>
+    
+    <!-- 字體 Noto Sans TC -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- PDF.js (用於解析上傳的 PDF) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <!-- jsPDF (用於生成下載的 PDF) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Noto Sans TC"', 'sans-serif'],
+                    },
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            500: '#0ea5e9',
+                            600: '#0284c7',
+                            900: '#0c4a6e',
+                        },
+                        wood: {
+                            light: '#deb887',
+                            DEFAULT: '#d2b48c',
+                            dark: '#8b4513',
+                            shelf: '#5d4037'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f3f4f6; }
+        
+        /* 木質背景紋理 */
+        .wood-texture {
+            background-color: #deb887;
+            background-image: repeating-linear-gradient(45deg, rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 2px, transparent 2px, transparent 4px),
+                              linear-gradient(to bottom, #d2b48c, #c19a6b);
+        }
+
+        /* 擬真書籍樣式 */
+        .book-card {
+            perspective: 1000px;
+            transition: transform 0.3s;
+        }
+        
+        /* 書架陰影 */
+        .shelf-shadow {
+            background: linear-gradient(to bottom, rgba(0,0,0,0.1), rgba(0,0,0,0.05) 10%, transparent);
+            border-bottom: 12px solid #8b5a2b; /* 書架厚度 */
+            box-shadow: 0 5px 10px rgba(0,0,0,0.3);
+            margin-bottom: 10px;
+            padding-bottom: 15px;
+            border-radius: 2px;
+        }
+
+        .book-cover-container {
+            aspect-ratio: 1/1.414;
+            position: relative;
+            background: white;
+            box-shadow: 
+                -1px 0 0 #999 inset, /* 右側書頁厚度感 */
+                3px 3px 10px rgba(0,0,0,0.4); /* 書本陰影 */
+            transform-style: preserve-3d;
+            transform: rotateY(-5deg); /* 微微側放 */
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+            border-radius: 2px 4px 4px 2px;
+            overflow: hidden;
+        }
+
+        /* 書脊效果 */
+        .book-cover-container::before {
+            content: '';
+            position: absolute;
+            top: 0; bottom: 0; left: 0;
+            width: 8px;
+            background: linear-gradient(to right, rgba(255,255,255,0.3), rgba(0,0,0,0.1) 40%, rgba(0,0,0,0.3));
+            z-index: 10;
+        }
+
+        /* Hover 效果 */
+        .book-card:hover .book-cover-container {
+            transform: rotateY(0deg) scale(1.05) translateY(-5px);
+            box-shadow: 5px 15px 25px rgba(0,0,0,0.5);
+            z-index: 20;
+        }
+
+        .book-cover-container img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        /* 閱讀器樣式 */
+        #readerContainer {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden; 
+            background-color: #000;
+            touch-action: none; 
+            position: relative;
+        }
+
+        .reader-image-wrapper {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transform-origin: center center;
+            transition: transform 0.1s ease-out;
+        }
+        
+        .reader-image {
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+            object-fit: contain;
+            user-select: none;
+            -webkit-user-drag: none;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="text-gray-800 h-screen flex flex-col overflow-hidden">
+
+    <!-- 頂部導航 -->
+    <nav class="bg-wood-dark shadow-lg z-20 border-b-4 border-wood-shelf">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center text-white">
+                    <i class="fa-solid fa-book-open text-yellow-400 text-2xl mr-3"></i>
+                    <h1 class="text-xl font-bold tracking-wide text-shadow">雲端電子書櫃 <span class="text-xs bg-yellow-600/50 text-yellow-100 px-2 py-1 rounded ml-2 border border-yellow-500/50">Drive版</span></h1>
+                </div>
+                <div class="flex items-center space-x-3">
+                    <button onclick="openUploadModal()" class="bg-green-600 text-white px-4 py-2 rounded shadow-md hover:bg-green-500 transition flex items-center border border-green-700">
+                        <i class="fa-solid fa-cloud-arrow-up mr-2"></i> 上傳 PDF
+                    </button>
+                    <button onclick="openSettings()" class="text-wood-light hover:text-white text-xl w-10 h-10 rounded-full hover:bg-white/10 transition flex items-center justify-center">
+                        <i class="fa-solid fa-gear"></i>
+                    </button>
+                    <button onclick="openHelp()" class="text-wood-light hover:text-white text-xl w-10 h-10 rounded-full hover:bg-white/10 transition flex items-center justify-center">
+                        <i class="fa-solid fa-circle-info"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- 主內容區 -->
+    <main class="flex-1 overflow-y-auto p-4 sm:p-8 relative wood-texture">
+        <!-- 分類標籤 -->
+        <div class="flex justify-center mb-8">
+            <div id="categoryTabs" class="flex space-x-2 bg-black/20 p-2 rounded-full backdrop-blur-sm overflow-x-auto">
+                <button class="px-5 py-2 bg-yellow-600 text-white rounded-full text-sm font-bold shadow-md ring-1 ring-yellow-400">全部</button>
+            </div>
+        </div>
+
+        <!-- 書櫃網格 -->
+        <div id="bookGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-x-8 gap-y-12 px-4">
+            <div class="col-span-full flex flex-col items-center justify-center py-20 text-wood-shelf">
+                <div class="loader mb-4 border-wood-dark border-t-yellow-500"></div>
+                <p class="font-bold text-shadow-sm text-white">正在整理書櫃...</p>
+            </div>
+        </div>
+
+        <!-- Made by Footer -->
+        <footer class="mt-12 mb-4 text-center">
+            <div class="inline-block bg-black/30 backdrop-blur-sm px-4 py-2 rounded-full border border-white/10">
+                <p class="text-sm text-white/80">
+                    Made by <a href="https://kentxchang.blogspot.com/" target="_blank" class="font-bold text-yellow-300 hover:text-white hover:underline transition">阿剛老師</a>
+                </p>
+            </div>
+        </footer>
+        
+        <!-- 未設定 API 提示 -->
+        <div id="setupAlert" class="hidden absolute inset-0 bg-black/80 z-10 flex flex-col items-center justify-center text-center p-6 backdrop-blur-sm">
+            <i class="fa-solid fa-server text-6xl text-gray-400 mb-4"></i>
+            <h2 class="text-2xl font-bold mb-2 text-white">尚未連接後端</h2>
+            <p class="text-gray-300 mb-6 max-w-md">請點擊右上角設定 (⚙️) 輸入您的 Google Apps Script 網址以啟用功能。</p>
+            <button onclick="openSettings()" class="bg-yellow-600 text-white px-6 py-3 rounded-lg hover:bg-yellow-500 transition shadow-lg font-bold">
+                前往設定
+            </button>
+        </div>
+    </main>
+
+    <!-- 上傳 Modal -->
+    <div id="uploadModal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 border-4 border-wood-light">
+            <h3 class="text-xl font-bold mb-4 border-b pb-2 text-wood-dark">上傳新書</h3>
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">書名</label>
+                    <input type="text" id="uploadTitle" class="w-full border-2 border-gray-300 rounded-lg p-2 outline-none focus:border-wood-dark focus:ring-1 focus:ring-wood-dark" placeholder="輸入書名">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">分類</label>
+                    <input type="text" id="uploadCategory" list="catList" class="w-full border-2 border-gray-300 rounded-lg p-2 outline-none focus:border-wood-dark focus:ring-1 focus:ring-wood-dark" placeholder="例如：雜誌、漫畫">
+                    <datalist id="catList"></datalist>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">選擇 PDF 檔案</label>
+                    <input type="file" id="uploadFile" accept="application/pdf" class="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-wood-light file:text-wood-shelf hover:file:bg-wood-dark hover:file:text-white transition cursor-pointer">
+                </div>
+                
+                <div id="uploadProgressContainer" class="hidden">
+                    <div class="flex justify-between text-xs text-gray-500 mb-1">
+                        <span id="progressText">準備處理...</span>
+                        <span id="progressPercent">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2.5">
+                        <div id="progressBar" class="bg-green-600 h-2.5 rounded-full" style="width: 0%"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-6 flex justify-end space-x-3">
+                <button onclick="closeModal('uploadModal')" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium">取消</button>
+                <button onclick="processAndUpload()" id="btnStartUpload" class="px-6 py-2 bg-wood-dark text-white rounded-lg hover:bg-wood-shelf shadow-md font-bold transition">開始上傳</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 閱讀器 Modal -->
+    <div id="readerModal" class="hidden fixed inset-0 bg-black z-50 flex flex-col h-screen w-screen">
+        <div class="flex justify-between items-center px-4 py-3 bg-gray-900/90 text-white backdrop-blur-sm z-30 absolute top-0 w-full transition-opacity hover:opacity-100" id="readerHeader">
+            <h3 id="readerTitle" class="font-medium truncate max-w-[50%] text-sm sm:text-base">閱讀器</h3>
+            <div class="flex space-x-3 items-center">
+                <button onclick="downloadBookPDF()" class="w-8 h-8 flex items-center justify-center bg-white/10 rounded-full hover:bg-white/20 transition" title="下載完整 PDF">
+                    <i class="fa-solid fa-download"></i>
+                </button>
+                <div class="w-px h-6 bg-gray-600 mx-1"></div>
+                <button onclick="zoomOut()" class="w-8 h-8 flex items-center justify-center bg-white/10 rounded-full hover:bg-white/20"><i class="fa-solid fa-minus"></i></button>
+                <button onclick="resetZoom()" class="w-8 h-8 flex items-center justify-center bg-white/10 rounded-full hover:bg-white/20"><i class="fa-solid fa-compress"></i></button>
+                <button onclick="zoomIn()" class="w-8 h-8 flex items-center justify-center bg-white/10 rounded-full hover:bg-white/20"><i class="fa-solid fa-plus"></i></button>
+                <div class="w-px h-6 bg-gray-600 mx-1"></div>
+                <button onclick="closeModal('readerModal')" class="w-8 h-8 flex items-center justify-center hover:text-red-400"><i class="fa-solid fa-xmark text-xl"></i></button>
+            </div>
+        </div>
+        
+        <div class="flex-1 relative overflow-hidden bg-black" id="gestureArea">
+            <div id="readerContainer">
+                <div id="imageWrapper" class="reader-image-wrapper"></div>
+            </div>
+            
+            <button onclick="prevPage()" class="hidden sm:flex absolute left-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-black/30 hover:bg-black/60 text-white rounded-full items-center justify-center transition z-20 backdrop-blur-sm">
+                <i class="fa-solid fa-chevron-left"></i>
+            </button>
+            <button onclick="nextPage()" class="hidden sm:flex absolute right-4 top-1/2 -translate-y-1/2 w-12 h-12 bg-black/30 hover:bg-black/60 text-white rounded-full items-center justify-center transition z-20 backdrop-blur-sm">
+                <i class="fa-solid fa-chevron-right"></i>
+            </button>
+        </div>
+        
+        <div class="bg-gray-900/80 text-gray-300 text-center py-3 text-sm z-30 absolute bottom-0 w-full backdrop-blur-sm">
+            <div class="flex justify-center items-center space-x-4">
+                <button onclick="prevPage()" class="sm:hidden px-4 py-1 bg-white/10 rounded">上一頁</button>
+                <span id="pageIndicator" class="font-mono">1 / 1</span>
+                <button onclick="nextPage()" class="sm:hidden px-4 py-1 bg-white/10 rounded">下一頁</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 設定 Modal -->
+    <div id="settingsModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6">
+            <div class="flex justify-between items-center mb-4 border-b pb-2">
+                <h3 class="text-xl font-bold flex items-center"><i class="fa-solid fa-gear mr-2"></i> 系統設定</h3>
+                <button onclick="closeModal('settingsModal')" class="text-gray-500 hover:text-red-500 transition">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">GAS Web App URL</label>
+                    <div class="relative">
+                        <input type="password" id="gasUrlInput" class="w-full border rounded-lg p-2 pr-10 outline-none font-mono text-sm" placeholder="https://script.google.com/macros/s/...">
+                        <button onclick="togglePasswordVisibility()" class="absolute right-2 top-2 text-gray-400 hover:text-gray-600">
+                            <i class="fa-solid fa-eye"></i>
+                        </button>
+                    </div>
+                </div>
+                <hr class="border-gray-200">
+                <div>
+                    <h4 class="font-medium text-gray-800 mb-2">分享</h4>
+                    <button onclick="generateShareLink()" class="w-full bg-green-600 text-white text-sm py-2 rounded hover:bg-green-700 transition mb-2">
+                        <i class="fa-solid fa-qrcode mr-1"></i> 產生連結與 QR
+                    </button>
+                    <div id="shareResult" class="hidden p-3 bg-gray-50 rounded border text-center">
+                        <div class="mb-2 flex justify-center">
+                            <img id="qrImage" src="" alt="QR Code" class="w-32 h-32 border bg-white p-1">
+                        </div>
+                        <p class="text-xs text-gray-500 break-all mb-2" id="shortUrlDisplay"></p>
+                        <button onclick="copyShareLink()" class="text-xs bg-gray-200 px-2 py-1 rounded">複製網址</button>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-6 flex justify-end">
+                <button onclick="saveSettings()" class="px-6 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700">儲存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div id="helpModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl p-6 h-[80vh] flex flex-col">
+            <div class="flex justify-between items-center mb-4 border-b pb-2">
+                <h3 class="text-xl font-bold">GAS 後端程式碼與部署教學</h3>
+                <button onclick="closeModal('helpModal')" class="text-gray-500 hover:text-red-500"><i class="fa-solid fa-xmark text-2xl"></i></button>
+            </div>
+            <div class="relative flex-1 bg-gray-800 rounded-lg overflow-hidden border border-gray-700">
+                <button onclick="copyGasCode()" class="absolute top-2 right-2 bg-white/10 text-white text-xs px-3 py-1 rounded border border-white/20 hover:bg-white/20 transition z-10">複製程式碼</button>
+                <textarea id="gasCodeDisplay" class="w-full h-full bg-transparent text-green-400 font-mono text-xs p-4 outline-none resize-none" readonly>載入中...</textarea>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+        let API_URL = localStorage.getItem('gas_book_api') || '';
+        let allBooks = [];
+        let currentPages = [];
+        let currentPageIndex = 0;
+        const CELL_LIMIT = 48000; 
+        
+        let currentScale = 1;
+        let currentTranslateX = 0;
+        let currentTranslateY = 0;
+        let isDragging = false;
+        let startX = 0, startY = 0;
+        let lastTouchDistance = 0; 
+        
+        const BACKEND_CODE_STRING = `/**
+ * ==========================================
+ * Google Apps Script 後端部署說明 (必讀)
+ * ==========================================
+ * 1. 到 Google Drive 建立一個新的 Google Sheet (試算表)，命名為「我的電子書櫃」。
+ * 2. 點擊上方選單的「擴充功能」>「Apps Script」。
+ * 3. 將編輯器內的程式碼全部刪除，貼上本段完整的程式碼。
+ * 4. 存檔 (Ctrl+S)。
+ * 5. 【重要：首次執行初始化】
+ * - 在上方工具列的函式選單中選擇 'testSetup'。
+ * - 點擊「執行」按鈕。
+ * - 系統會跳出權限核對視窗，請依序點擊：
+ * 審查權限 > 選擇您的帳號 > 進階 (Advanced) > 前往... (Go to...) > 允許 (Allow)。
+ * (下方執行記錄看到 "Database initialized." 即代表成功，試算表會自動建立欄位，Drive 中會建立 "PDF_Ebook_Images" 資料夾)。
+ * 6. 【關鍵：部署為 Web App】
+ * - 點擊右上角藍色的「部署」按鈕 >「新增部署作業」。
+ * - 點擊左側齒輪圖示 > 選擇「網頁應用程式」。
+ * - 說明：輸入 "v1"。
+ * - 執行身分：選擇【我 (Me)】。
+ * - 誰可以存取：選擇【任何人 (Anyone)】 <--- 務必選這個。
+ * - 點擊「部署」。
+ * 7. 複製網址並回到前端設定。
+ * ==========================================
+ */
+
+const SHEET_BOOKS = "圖書清單";
+const SHEET_PAGES = "書籍內頁";
+const FOLDER_NAME = "PDF_Ebook_Images"; // Drive 資料夾名稱
+
+// 處理 GET 請求
+function doGet(e) {
+  const params = e.parameter;
+  const op = params.op;
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    if (op === 'getBooks') {
+      const sheet = ss.getSheetByName(SHEET_BOOKS);
+      if (!sheet) return responseJSON({ status: 'success', data: [] });
+      const data = sheet.getDataRange().getValues();
+      if (data.length <= 1) return responseJSON({ status: 'success', data: [] });
+      const headers = data.shift();
+      const books = data.map(row => ({
+        id: row[0],
+        title: row[1],
+        category: row[2],
+        cover: row[3],
+        timestamp: row[4]
+      })).filter(b => b.id !== "");
+      return responseJSON({ status: 'success', data: books });
+    } else if (op === 'getPages') {
+      const bookId = params.bookId;
+      const sheet = ss.getSheetByName(SHEET_PAGES);
+      if (!sheet) return responseJSON({ status: 'success', data: [] });
+      const data = sheet.getDataRange().getValues();
+      // 回傳 imageId (Drive File ID)
+      const pages = data.slice(1).filter(row => row[0] == bookId).sort((a, b) => a[1] - b[1]).map(row => ({
+        pageNo: row[1],
+        imageId: row[2] 
+      }));
+      return responseJSON({ status: 'success', data: pages });
+    }
+    return responseJSON({ status: 'error', message: 'Unknown operation' });
+  } catch (err) {
+    return responseJSON({ status: 'error', message: err.toString() });
+  }
+}
+
+// 處理 POST 請求
+function doPost(e) {
+  try {
+    initDatabase();
+    const postData = JSON.parse(e.postData.contents);
+    const op = postData.op;
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    
+    if (op === 'createBook') {
+      const sheet = ss.getSheetByName(SHEET_BOOKS);
+      const id = new Date().getTime().toString();
+      // 封面存入 Sheet (Base64)
+      if (postData.cover.length > 50000) return responseJSON({ status: 'error', message: '封面圖片過大，請確保前端壓縮正常' });
+      sheet.appendRow([id, postData.title, postData.category, postData.cover, new Date()]);
+      return responseJSON({ status: 'success', bookId: id });
+    } 
+    
+    else if (op === 'uploadPage') {
+      const sheet = ss.getSheetByName(SHEET_PAGES);
+      
+      // 內頁存入 Google Drive
+      const folder = getImagesFolder();
+      // 檔名: p_{bookId}_{pageNo}.jpg
+      const fileName = "p_" + postData.bookId + "_" + postData.pageNo + ".jpg";
+      
+      // Base64 解碼為 Blob
+      const blob = Utilities.newBlob(Utilities.base64Decode(postData.image.split(',')[1]), MimeType.JPEG, fileName);
+      const file = folder.createFile(blob);
+      
+      // 設定權限為公開讀取 (確保前端能直接讀到圖片)
+      file.setSharing(DriveApp.Access.ANYONE, DriveApp.Permission.VIEW);
+      
+      // 試算表只存 Drive File ID
+      sheet.appendRow([postData.bookId, postData.pageNo, file.getId()]);
+      
+      return responseJSON({ status: 'success', pageNo: postData.pageNo });
+    } 
+    
+    else if (op === 'deleteBook') {
+      const bookId = postData.bookId;
+      deleteRows(ss.getSheetByName(SHEET_BOOKS), 0, bookId);
+      deleteRows(ss.getSheetByName(SHEET_PAGES), 0, bookId);
+      // 進階: 若要刪除 Drive 檔案需額外實作
+      return responseJSON({ status: 'success' });
+    }
+    return responseJSON({ status: 'error', message: 'Unknown operation' });
+  } catch (err) {
+    return responseJSON({ status: 'error', message: err.toString() });
+  }
+}
+
+// 輔助：取得或建立圖片資料夾 (修正：在試算表所在目錄建立)
+function getImagesFolder() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const file = DriveApp.getFileById(ss.getId());
+  const parents = file.getParents();
+  const parent = parents.hasNext() ? parents.next() : DriveApp.getRootFolder();
+  
+  const folders = parent.getFoldersByName(FOLDER_NAME);
+  if (folders.hasNext()) {
+    return folders.next();
+  } else {
+    const folder = parent.createFolder(FOLDER_NAME);
+    folder.setSharing(DriveApp.Access.ANYONE, DriveApp.Permission.VIEW);
+    return folder;
+  }
+}
+
+function deleteRows(sheet, colIndex, value) {
+  if (!sheet) return;
+  const data = sheet.getDataRange().getValues();
+  for (let i = data.length - 1; i >= 1; i--) {
+    if (data[i][colIndex] == value) {
+      sheet.deleteRow(i + 1);
+    }
+  }
+}
+
+function initDatabase() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss.getSheetByName(SHEET_BOOKS)) {
+    const sheet = ss.insertSheet(SHEET_BOOKS);
+    sheet.appendRow(["書籍ID", "書名", "分類", "封面圖(Base64)", "建立時間"]);
+  }
+  if (!ss.getSheetByName(SHEET_PAGES)) {
+    const sheet = ss.insertSheet(SHEET_PAGES);
+    sheet.appendRow(["書籍ID", "頁碼", "圖片ID(Drive)"]); // 標題改變
+  }
+}
+
+function responseJSON(data) {
+  return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function testSetup() {
+  initDatabase();
+  getImagesFolder(); // 測試建立資料夾
+  console.log("Database initialized.");
+}`;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const configParam = urlParams.get('config');
+            if (configParam) {
+                try {
+                    const decodedUrl = atob(configParam);
+                    if (decodedUrl.startsWith('http')) {
+                        API_URL = decodedUrl;
+                        localStorage.setItem('gas_book_api', API_URL);
+                        window.history.replaceState({}, document.title, window.location.pathname);
+                        alert('連線成功！');
+                    }
+                } catch (e) {}
+            }
+
+            document.getElementById('gasCodeDisplay').value = BACKEND_CODE_STRING; 
+            
+            if (!API_URL) {
+                document.getElementById('setupAlert').classList.remove('hidden');
+                document.querySelector('.loader').parentElement.classList.add('hidden');
+            } else {
+                fetchBooks();
+            }
+
+            const gestureArea = document.getElementById('gestureArea');
+            
+            gestureArea.addEventListener('mousedown', startPan);
+            document.addEventListener('mousemove', pan);
+            document.addEventListener('mouseup', endPan);
+            
+            gestureArea.addEventListener('touchstart', handleTouchStart, { passive: false });
+            gestureArea.addEventListener('touchmove', handleTouchMove, { passive: false });
+            gestureArea.addEventListener('touchend', handleTouchEnd);
+        });
+
+        async function fetchBooks() {
+            try {
+                const response = await fetch(`${API_URL}?op=getBooks`);
+                const json = await response.json();
+                if (json.status === 'success') {
+                    allBooks = json.data;
+                    renderCategories();
+                    renderBooks(allBooks);
+                } else {
+                    alert('讀取失敗: ' + json.message);
+                }
+            } catch (err) {
+                console.error(err);
+                alert('連線錯誤，請檢查網址。');
+                openSettings();
+            }
+        }
+
+        function renderCategories() {
+            const categories = ['全部', ...new Set(allBooks.map(b => b.category))];
+            const container = document.getElementById('categoryTabs');
+            container.innerHTML = categories.map((cat, idx) => `
+                <button onclick="filterCategory('${cat}')" 
+                    class="px-5 py-2 rounded-full text-sm font-bold shadow-md transition whitespace-nowrap border-2
+                    ${idx === 0 ? 'bg-yellow-600 text-white border-yellow-500' : 'bg-white/80 text-wood-dark border-transparent hover:bg-white'}">
+                    ${cat}
+                </button>
+            `).join('');
+        }
+
+        function filterCategory(category) {
+            const buttons = document.getElementById('categoryTabs').children;
+            Array.from(buttons).forEach(btn => {
+                if (btn.innerText === category) {
+                    btn.className = "px-5 py-2 bg-yellow-600 text-white rounded-full text-sm font-bold shadow-md transition whitespace-nowrap border-2 border-yellow-500";
+                } else {
+                    btn.className = "px-5 py-2 bg-white/80 text-wood-dark rounded-full text-sm font-bold shadow-md transition whitespace-nowrap border-2 border-transparent hover:bg-white";
+                }
+            });
+            renderBooks(category === '全部' ? allBooks : allBooks.filter(b => b.category === category));
+        }
+
+        function renderBooks(books) {
+            const grid = document.getElementById('bookGrid');
+            if (books.length === 0) {
+                grid.innerHTML = `<div class="col-span-full text-center text-white text-lg font-bold py-10 text-shadow">書架是空的</div>`;
+                return;
+            }
+
+            grid.innerHTML = books.map(book => `
+                <div class="book-card group relative cursor-pointer flex flex-col shelf-shadow" onclick="openBook('${book.id}', '${book.title}')">
+                    <div class="book-cover-container">
+                        <img src="${book.cover}" alt="${book.title}">
+                    </div>
+                    <div class="mt-3 text-center px-1">
+                        <h3 class="font-bold text-wood-shelf text-sm truncate mb-1 bg-white/60 px-2 py-1 rounded backdrop-blur-sm">${book.title}</h3>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function openBook(bookId, title) {
+            document.getElementById('readerModal').classList.remove('hidden');
+            document.getElementById('readerTitle').innerText = title;
+            const container = document.getElementById('imageWrapper');
+            container.innerHTML = '<div class="text-white">載入頁面中...</div>';
+            resetZoom();
+
+            try {
+                const response = await fetch(`${API_URL}?op=getPages&bookId=${bookId}`);
+                const json = await response.json();
+                
+                if (json.status === 'success') {
+                    currentPages = json.data;
+                    currentPageIndex = 0;
+                    showPage(0);
+                } else {
+                    container.innerHTML = '<div class="text-red-400">無法讀取頁面</div>';
+                }
+            } catch (e) {
+                container.innerHTML = '<div class="text-red-400">連線錯誤</div>';
+            }
+        }
+
+        function showPage(index) {
+            const container = document.getElementById('imageWrapper');
+            if (!currentPages[index]) return;
+
+            const imageUrl = `https://lh3.googleusercontent.com/d/${currentPages[index].imageId}`;
+
+            container.innerHTML = `
+                <img src="${imageUrl}" 
+                     class="reader-image" 
+                     draggable="false"
+                     alt="Page ${currentPages[index].pageNo}">
+            `;
+            
+            updatePageIndicator();
+            resetZoom(); 
+        }
+
+        async function downloadBookPDF() {
+            if (!currentPages || currentPages.length === 0) return;
+            
+            const btn = event.currentTarget;
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+            btn.disabled = true;
+
+            const statusDiv = document.createElement('div');
+            statusDiv.className = 'absolute top-20 left-1/2 -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded z-50 text-sm';
+            statusDiv.id = 'downloadStatus';
+            statusDiv.innerText = '準備下載 PDF...';
+            document.getElementById('gestureArea').appendChild(statusDiv);
+
+            try {
+                const { jsPDF } = window.jspdf;
+                let doc = null;
+
+                for (let i = 0; i < currentPages.length; i++) {
+                    statusDiv.innerText = `正在下載頁面 ${i + 1} / ${currentPages.length}...`;
+                    
+                    const page = currentPages[i];
+                    const imgUrl = `https://lh3.googleusercontent.com/d/${page.imageId}`;
+                    
+                    const imgData = await loadImageForPDF(imgUrl);
+                    
+                    if (i === 0) {
+                        doc = new jsPDF({
+                            orientation: imgData.width > imgData.height ? 'l' : 'p',
+                            unit: 'px',
+                            format: [imgData.width, imgData.height]
+                        });
+                        doc.addImage(imgData.base64, 'JPEG', 0, 0, imgData.width, imgData.height);
+                    } else {
+                        doc.addPage([imgData.width, imgData.height], imgData.width > imgData.height ? 'l' : 'p');
+                        doc.addImage(imgData.base64, 'JPEG', 0, 0, imgData.width, imgData.height);
+                    }
+                }
+                
+                statusDiv.innerText = '正在產生 PDF 檔案...';
+                const title = document.getElementById('readerTitle').innerText || 'ebook';
+                doc.save(`${title}.pdf`);
+                
+            } catch (err) {
+                console.error(err);
+                alert('下載失敗: ' + err.message);
+            } finally {
+                if (document.getElementById('downloadStatus')) {
+                    document.getElementById('downloadStatus').remove();
+                }
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+            }
+        }
+
+        function loadImageForPDF(url) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.crossOrigin = "Anonymous"; 
+                img.src = url;
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.naturalWidth;
+                    canvas.height = img.naturalHeight;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    resolve({
+                        base64: canvas.toDataURL('image/jpeg', 0.8), 
+                        width: img.naturalWidth,
+                        height: img.naturalHeight
+                    });
+                };
+                img.onerror = (e) => reject(new Error('圖片載入失敗，可能是跨域問題'));
+            });
+        }
+
+        function nextPage() {
+            if (currentPageIndex < currentPages.length - 1) {
+                currentPageIndex++;
+                showPage(currentPageIndex);
+            }
+        }
+
+        function prevPage() {
+            if (currentPageIndex > 0) {
+                currentPageIndex--;
+                showPage(currentPageIndex);
+            }
+        }
+
+        function updatePageIndicator() {
+            document.getElementById('pageIndicator').innerText = `${currentPageIndex + 1} / ${currentPages.length}`;
+        }
+
+        function updateTransform() {
+            const wrapper = document.getElementById('imageWrapper');
+            wrapper.style.transform = `translate(${currentTranslateX}px, ${currentTranslateY}px) scale(${currentScale})`;
+            if (isDragging) {
+                wrapper.style.transition = 'none';
+            } else {
+                wrapper.style.transition = 'transform 0.1s ease-out';
+            }
+        }
+
+        function zoomIn() {
+            currentScale *= 1.2;
+            updateTransform();
+        }
+
+        function zoomOut() {
+            currentScale /= 1.2;
+            if (currentScale < 1) resetZoom();
+            else updateTransform();
+        }
+
+        function resetZoom() {
+            currentScale = 1;
+            currentTranslateX = 0;
+            currentTranslateY = 0;
+            updateTransform();
+        }
+
+        function handleTouchStart(e) {
+            if (e.touches.length === 2) {
+                e.preventDefault();
+                isDragging = false;
+                lastTouchDistance = getDistance(e.touches);
+            } else if (e.touches.length === 1) {
+                startX = e.touches[0].clientX - currentTranslateX;
+                startY = e.touches[0].clientY - currentTranslateY;
+                
+                this.touchStartX = e.touches[0].clientX;
+                this.touchStartY = e.touches[0].clientY;
+                
+                if (currentScale > 1) {
+                     isDragging = true;
+                     e.preventDefault(); 
+                }
+            }
+        }
+
+        function handleTouchMove(e) {
+            if (e.touches.length === 2) {
+                e.preventDefault();
+                const dist = getDistance(e.touches);
+                const delta = dist / lastTouchDistance;
+                currentScale *= delta;
+                if (currentScale < 1) currentScale = 1; 
+                lastTouchDistance = dist;
+                updateTransform();
+            } else if (e.touches.length === 1 && currentScale > 1 && isDragging) {
+                e.preventDefault();
+                currentTranslateX = e.touches[0].clientX - startX;
+                currentTranslateY = e.touches[0].clientY - startY;
+                updateTransform();
+            }
+        }
+
+        function handleTouchEnd(e) {
+            isDragging = false;
+            if (e.touches.length === 0) {
+                if (currentScale === 1) {
+                     const touchEndX = e.changedTouches[0].clientX;
+                     const diffX = touchEndX - this.touchStartX;
+                     if (Math.abs(diffX) > 50) { 
+                         if (diffX > 0) prevPage();
+                         else nextPage();
+                     }
+                }
+            }
+        }
+
+        function getDistance(touches) {
+            return Math.hypot(
+                touches[0].clientX - touches[1].clientX,
+                touches[0].clientY - touches[1].clientY
+            );
+        }
+
+        function startPan(e) {
+            if (currentScale > 1) {
+                e.preventDefault(); 
+                isDragging = true;
+                startX = e.clientX - currentTranslateX;
+                startY = e.clientY - currentTranslateY;
+                document.getElementById('readerContainer').style.cursor = 'grabbing';
+            }
+        }
+
+        function pan(e) {
+            if (isDragging && currentScale > 1) {
+                e.preventDefault();
+                currentTranslateX = e.clientX - startX;
+                currentTranslateY = e.clientY - startY;
+                updateTransform();
+            }
+        }
+
+        function endPan() {
+            isDragging = false;
+            document.getElementById('readerContainer').style.cursor = 'default';
+        }
+
+        async function processAndUpload() {
+            const fileInput = document.getElementById('uploadFile');
+            const titleInput = document.getElementById('uploadTitle');
+            const catInput = document.getElementById('uploadCategory');
+
+            if (!fileInput.files[0] || !titleInput.value || !catInput.value) {
+                alert('請填寫完整資訊並選擇檔案');
+                return;
+            }
+            if (!API_URL) { alert('請先設定 API 網址'); return; }
+
+            const file = fileInput.files[0];
+            const title = titleInput.value;
+            const category = catInput.value;
+
+            document.getElementById('btnStartUpload').disabled = true;
+            document.getElementById('btnStartUpload').innerText = "處理中...";
+            document.getElementById('uploadProgressContainer').classList.remove('hidden');
+
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+                const totalPages = pdf.numPages;
+
+                updateProgress(5, `PDF 解析完成，共 ${totalPages} 頁`);
+
+                const coverBase64 = await compressImageForSheet(pdf, 1, 500); 
+                
+                updateProgress(10, '建立書籍資料...');
+                
+                const createRes = await fetch(API_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        op: 'createBook',
+                        title: title,
+                        category: category,
+                        cover: coverBase64
+                    })
+                }).then(r => r.json());
+
+                if (createRes.status !== 'success') throw new Error(createRes.message);
+                const bookId = createRes.bookId;
+
+                for (let i = 1; i <= totalPages; i++) {
+                    const percent = 10 + Math.round(((i) / totalPages) * 90);
+                    updateProgress(percent, `上傳第 ${i} 頁...`);
+                    
+                    const pageBase64 = await renderPageToImage(pdf, i, 1024, 0.8);
+                    
+                    await fetch(API_URL, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            op: 'uploadPage',
+                            bookId: bookId,
+                            pageNo: i,
+                            image: pageBase64
+                        })
+                    }).then(r => r.json());
+                }
+
+                updateProgress(100, '上傳完成！');
+                setTimeout(() => {
+                    closeModal('uploadModal');
+                    fetchBooks();
+                    fileInput.value = '';
+                    titleInput.value = '';
+                    document.getElementById('btnStartUpload').disabled = false;
+                    document.getElementById('btnStartUpload').innerText = "開始上傳";
+                    document.getElementById('uploadProgressContainer').classList.add('hidden');
+                }, 1000);
+
+            } catch (err) {
+                console.error(err);
+                alert('上傳發生錯誤: ' + err.message);
+                document.getElementById('btnStartUpload').disabled = false;
+                document.getElementById('btnStartUpload').innerText = "開始上傳";
+            }
+        }
+
+        async function renderPageToImage(pdf, pageNum, targetWidth, quality) {
+            const page = await pdf.getPage(pageNum);
+            const viewport = page.getViewport({ scale: 1 });
+            const scale = targetWidth / viewport.width;
+            const scaledViewport = page.getViewport({ scale: scale });
+
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.height = scaledViewport.height;
+            canvas.width = scaledViewport.width;
+
+            await page.render({
+                canvasContext: context,
+                viewport: scaledViewport
+            }).promise;
+
+            return canvas.toDataURL('image/jpeg', quality);
+        }
+
+        async function compressImageForSheet(pdf, pageNum, initialWidth) {
+            const page = await pdf.getPage(pageNum);
+            const viewport = page.getViewport({ scale: 1 });
+            
+            let currentWidth = initialWidth;
+            let currentQuality = 0.5;
+            let base64 = "";
+            let attempts = 0;
+
+            while (true) {
+                attempts++;
+                const scale = currentWidth / viewport.width;
+                const scaledViewport = page.getViewport({ scale: scale });
+
+                const canvas = document.createElement('canvas');
+                const context = canvas.getContext('2d');
+                canvas.height = scaledViewport.height;
+                canvas.width = scaledViewport.width;
+
+                await page.render({
+                    canvasContext: context,
+                    viewport: scaledViewport
+                }).promise;
+
+                base64 = canvas.toDataURL('image/jpeg', currentQuality);
+
+                if (base64.length < CELL_LIMIT) {
+                    return base64;
+                }
+                
+                if (currentQuality > 0.3) {
+                    currentQuality -= 0.1;
+                } else {
+                    currentWidth -= 50;
+                }
+
+                if (currentWidth < 200 || attempts > 10) {
+                    return base64;
+                }
+            }
+        }
+
+        function updateProgress(percent, text) {
+            document.getElementById('progressBar').style.width = percent + '%';
+            document.getElementById('progressPercent').innerText = percent + '%';
+            document.getElementById('progressText').innerText = text;
+        }
+
+        function openSettings() {
+            document.getElementById('settingsModal').classList.remove('hidden');
+            document.getElementById('gasUrlInput').value = API_URL;
+        }
+
+        function saveSettings() {
+            const url = document.getElementById('gasUrlInput').value.trim();
+            if (url) {
+                localStorage.setItem('gas_book_api', url);
+                API_URL = url;
+                document.getElementById('setupAlert').classList.add('hidden');
+                closeModal('settingsModal');
+                fetchBooks();
+            }
+        }
+        
+        function togglePasswordVisibility() {
+            const input = document.getElementById('gasUrlInput');
+            input.type = input.type === 'password' ? 'text' : 'password';
+        }
+
+        function generateShareLink() {
+            if (!API_URL) { alert('請先設定並儲存 GAS URL'); return; }
+            const encoded = btoa(API_URL);
+            const longUrl = window.location.origin + window.location.pathname + '?config=' + encoded;
+            const qrApi = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(longUrl)}`;
+            document.getElementById('qrImage').src = qrApi;
+            document.getElementById('shortUrlDisplay').innerText = longUrl;
+            document.getElementById('shareResult').classList.remove('hidden');
+        }
+
+        function copyShareLink() {
+            navigator.clipboard.writeText(document.getElementById('shortUrlDisplay').innerText).then(() => alert('已複製'));
+        }
+
+        // 修改後的上傳按鈕邏輯
+        function openUploadModal() {
+            const password = prompt("請輸入上傳密碼 (tpet)：");
+            if (password === 'tpet') {
+                document.getElementById('uploadModal').classList.remove('hidden'); 
+            } else if (password !== null) {
+                alert("密碼錯誤，無法開啟上傳功能。");
+            }
+        }
+        
+        function openHelp() { document.getElementById('helpModal').classList.remove('hidden'); }
+        function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
+        function copyGasCode() { navigator.clipboard.writeText(BACKEND_CODE_STRING).then(() => alert('已複製')); }
+    </script>
+</body>
+</html>
